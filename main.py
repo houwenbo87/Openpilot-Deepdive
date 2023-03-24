@@ -21,12 +21,14 @@ else:
     from torch.utils.tensorboard import SummaryWriter
 
 from data import PlanningDataset, SequencePlanningDataset, Comma2k19SequenceDataset
-from model import PlaningNetwork, MultipleTrajectoryPredictionLoss, SequencePlanningNetwork
+from poseidon_data import PoseidonSequenceDataset
+from model import PlaningNetwork, MultipleTrajectoryPredictionLoss, SequencePlanningNetwork, OpenpilotNetwork
 from utils import draw_trajectory_on_ax, get_val_metric, get_val_metric_keys
+import matplotlib.pyplot as plt
 
 
 def get_hyperparameters(parser: ArgumentParser):
-    parser.add_argument('--batch_size', type=int, default=6)
+    parser.add_argument('--batch_size', type=int, default=8)
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--n_workers', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=100)
@@ -59,8 +61,11 @@ def setup(rank, world_size):
 
 
 def get_dataloader(rank, world_size, batch_size, pin_memory=False, num_workers=0):
-    train = Comma2k19SequenceDataset('data/comma2k19_train_non_overlap.txt', 'data/comma2k19/','train', use_memcache=False)
-    val = Comma2k19SequenceDataset('data/comma2k19_val_non_overlap.txt', 'data/comma2k19/','demo', use_memcache=False)
+    #train = Comma2k19SequenceDataset('data/comma2k19_train_non_overlap.txt', 'data/comma2k19/','train', use_memcache=False)
+    #val = Comma2k19SequenceDataset('data/comma2k19_val_non_overlap.txt', 'data/comma2k19/','demo', use_memcache=False)
+
+    train = PoseidonSequenceDataset('data/poseidon_train.txt', 'data/poseidon/','train', use_memcache=False)
+    val = PoseidonSequenceDataset('data/poseidon_val.txt', 'data/poseidon/','demo', use_memcache=False)
 
     if torch.__version__ == 'parrots':
         dist_sampler_params = dict(num_replicas=world_size, rank=rank, shuffle=True)
@@ -111,19 +116,52 @@ class SequenceBaselineV1(nn.Module):
             hidden = torch.zeros((2, x.size(0), 512)).to(self.device)
         return self.net(x, hidden)
 
+class SequenceOpenpilot(nn.Module):
+    def __init__(self, M, num_pts, mtp_alpha, lr, optimizer, optimize_per_n_step=40) -> None:
+        super().__init__()
+        self.M = M
+        self.num_pts = num_pts
+        self.mtp_alpha = mtp_alpha
+        self.lr = lr
+        self.optimizer = optimizer
+
+        self.net = OpenpilotNetwork(M, num_pts)
+
+        self.optimize_per_n_step = optimize_per_n_step  # for the gru module
+
+    @staticmethod
+    def configure_optimizers(args, model):
+        if args.optimizer == 'sgd':
+            optimizer = optim.SGD(model.parameters(), lr=args.lr, momentum=0.9, weight_decay=0.01)
+        elif args.optimizer == 'adam':
+            optimizer = optim.Adam(model.parameters(), lr=args.lr, weight_decay=0.01)
+        elif args.optimizer == 'adamw':
+            optimizer = optim.AdamW(model.parameters(), lr=args.lr, )
+        else:
+            raise NotImplementedError
+        lr_scheduler = optim.lr_scheduler.StepLR(optimizer, 20, 0.9)
+
+        return optimizer, lr_scheduler
+
+    def forward(self, x, hidden=None):
+        if hidden is None:
+            hidden = torch.zeros((2, x.size(0), 512)).to(self.device)
+        return self.net(x, hidden)
 
 def main(rank, world_size, args):
     if rank == 0:
         writer = SummaryWriter()
 
     train_dataloader, val_dataloader = get_dataloader(rank, world_size, args.batch_size, False, args.n_workers)
-    model = SequenceBaselineV1(args.M, args.num_pts, args.mtp_alpha, args.lr, args.optimizer, args.optimize_per_n_step)
+    #model = SequenceBaselineV1(args.M, args.num_pts, args.mtp_alpha, args.lr, args.optimizer, args.optimize_per_n_step)
+    model = SequenceOpenpilot(args.M, args.num_pts, args.mtp_alpha, args.lr, args.optimizer, args.optimize_per_n_step)
     use_sync_bn = args.sync_bn
     if use_sync_bn:
         model = nn.SyncBatchNorm.convert_sync_batchnorm(model)
     model = model.cuda()
     optimizer, lr_scheduler = model.configure_optimizers(args, model)
-    model: SequenceBaselineV1
+    #model: SequenceBaselineV1
+    model: OpenpilotNetwork
     if args.resume and rank == 0:
         print('Loading weights from', args.resume)
         model.load_state_dict(torch.load(args.resume), strict=True)
@@ -161,6 +199,28 @@ def main(rank, world_size, args):
                     writer.add_scalar('loss/reg_y', reg_loss[1], num_steps)
                     writer.add_scalar('loss/reg_z', reg_loss[2], num_steps)
                     writer.add_scalar('param/lr', optimizer.param_groups[0]['lr'], num_steps)
+
+                    fig = plt.figure(figsize=(12, 9))  # W, H
+                    spec = fig.add_gridspec(2, 2)  # H, W
+                    ax1 = fig.add_subplot(spec[ 0,  0])  # H, W
+                    ax2 = fig.add_subplot(spec[ 0,  1])
+                    ax3 = fig.add_subplot(spec[ 1,  :])
+                    
+                    img_0 = (inputs[0, 0, ...].cpu().detach().numpy() * 255).astype(np.uint8)
+                    img_1 = (inputs[0, 6, ...].cpu().detach().numpy() * 255).astype(np.uint8)
+                    ax1.imshow(img_0)
+                    ax1.set_title('network input [previous]')
+                    ax1.axis('off')
+                    
+                    ax2.imshow(img_1)
+                    ax2.set_title('network input [current]')
+                    ax2.axis('off')
+                    
+                    ax3.scatter(labels.cpu().detach().numpy()[0, :, 0], labels.cpu().detach().numpy()[0, :, 1], color='r', label='gt')
+                    ax3.scatter(pred_trajectory.cpu().detach().numpy()[0, :, :, 0], pred_trajectory.cpu().detach().numpy()[0, :, :, 1], color='g', label='pred')
+                    ax3.grid()
+                    plt.tight_layout()
+                    writer.add_figure('label & prompt', figure=fig, global_step=num_steps)
 
                 if (t + 1) % model.module.optimize_per_n_step == 0:
                     hidden = hidden.clone().detach()
