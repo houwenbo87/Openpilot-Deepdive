@@ -29,7 +29,7 @@ import matplotlib.pyplot as plt
 
 def get_hyperparameters(parser: ArgumentParser):
     parser.add_argument('--batch_size', type=int, default=8)
-    parser.add_argument('--lr', type=float, default=1e-4)
+    parser.add_argument('--lr', type=float, default=1e-3)
     parser.add_argument('--n_workers', type=int, default=4)
     parser.add_argument('--epochs', type=int, default=100)
     parser.add_argument('--log_per_n_step', type=int, default=20)
@@ -164,7 +164,7 @@ def main(rank, world_size, args):
     model: OpenpilotNetwork
     if args.resume and rank == 0:
         print('Loading weights from', args.resume)
-        model.load_state_dict(torch.load(args.resume), strict=True)
+        model.load_state_dict(torch.load(args.resume), strict=False)
     dist.barrier()
     model = nn.parallel.DistributedDataParallel(model, device_ids=[rank], find_unused_parameters=True, broadcast_buffers=False)
     loss = MultipleTrajectoryPredictionLoss(args.mtp_alpha, args.M, args.num_pts, distance_type='angle')

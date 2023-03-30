@@ -7,20 +7,23 @@ from tqdm import tqdm
 from torch.nn.functional import softmax
 
 from data import PlanningDataset, Comma2k19SequenceDataset
-from main import SequenceBaselineV1
+from poseidon_data import PoseidonSequenceDataset
+from main import SequenceBaselineV1, SequenceOpenpilot
 from torch.utils.data import DataLoader
 
 import matplotlib.pyplot as plt
 
 
-CKPT_PATH = 'vis/M5_epoch_94.pth'  # Path to your checkpoint
+CKPT_PATH = 'runs/Mar28_05-46-29_houwenbo-dev-0/epoch_93.pth'  # Path to your checkpoint
 
 # You can generate your own comma2k19_demo.txt to make some fancy demos
 # val = Comma2k19SequenceDataset('data/comma2k19_demo.txt', 'data/comma2k19/','demo', use_memcache=False, return_origin=True)
-val = Comma2k19SequenceDataset('data/comma2k19_val_non_overlap.txt', 'data/comma2k19/','demo', use_memcache=False, return_origin=True)
+#val = Comma2k19SequenceDataset('data/comma2k19_val_non_overlap.txt', 'data/comma2k19/','demo', use_memcache=False, return_origin=True)
+val = PoseidonSequenceDataset('data/poseidon_val.txt', 'data/poseidon/','demo', use_memcache=False, return_origin=True)
 val_loader = DataLoader(val, 1, num_workers=0, shuffle=False)
 
-planning_v0 = SequenceBaselineV1(5, 33, 1.0, 0.0, 'adamw')
+#planning_v0 = SequenceBaselineV1(5, 33, 1.0, 0.0, 'adamw')
+planning_v0 = SequenceOpenpilot(5, 33, 1.0, 0.0, 'adamw')
 planning_v0.load_state_dict(torch.load(CKPT_PATH))
 planning_v0.eval().cuda()
 
@@ -48,10 +51,12 @@ for b_idx, batch in enumerate(val_loader):
             pred_trajectory = pred_trajectory.reshape(planning_v0.M, planning_v0.num_pts, 3).cpu().numpy()
 
         inputs, labels = inputs.cpu(), labels.cpu()
-        vis_img = (inputs.permute(0, 2, 3, 1)[0] * torch.tensor((0.2172, 0.2141, 0.2209, 0.2172, 0.2141, 0.2209)) + torch.tensor((0.3890, 0.3937, 0.3851, 0.3890, 0.3937, 0.3851)) )  * 255
+        #vis_img = (inputs.permute(0, 2, 3, 1)[0] * torch.tensor((0.2172, 0.2141, 0.2209, 0.2172, 0.2141, 0.2209)) + torch.tensor((0.3890, 0.3937, 0.3851, 0.3890, 0.3937, 0.3851)) )  * 255
+        vis_img = inputs.permute(0, 2, 3, 1)[0] * 255
         # print(vis_img.max(), vis_img.min(), vis_img.mean())
         vis_img = vis_img.clamp(0, 255)
-        img_0, img_1 = vis_img[..., :3].numpy().astype(np.uint8), vis_img[..., 3:].numpy().astype(np.uint8)
+        #img_0, img_1 = vis_img[..., :3].numpy().astype(np.uint8), vis_img[..., 3:].numpy().astype(np.uint8)
+        img_0, img_1 = vis_img[..., 0].numpy().astype(np.uint8), vis_img[..., 6].numpy().astype(np.uint8)
 
         # fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(nrows=2, ncols=2, figsize=(16, 9))
         # fig = plt.figure(figsize=(16, 9), constrained_layout=True)

@@ -1,9 +1,12 @@
 import numpy as np
 import utils_comma2k19.orientation as orient
 
-FULL_FRAME_SIZE = (1164, 874)
+FULL_FRAME_SIZE = (1920, 1080)
+eon_focal_length = FOCAL = 1204
+
+#FULL_FRAME_SIZE = (1164, 874)
 W, H = FULL_FRAME_SIZE[0], FULL_FRAME_SIZE[1]
-eon_focal_length = FOCAL = 910.0
+#eon_focal_length = FOCAL = 910.0
 
 # aka 'K' aka camera_frame_from_view_frame
 eon_intrinsics = np.array([

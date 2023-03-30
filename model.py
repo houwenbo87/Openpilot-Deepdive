@@ -116,18 +116,17 @@ class OpenpilotNetwork(nn.Module):
         self.gru = nn.GRU(input_size=1024, hidden_size=512, bidirectional=True, batch_first=True)  # 1024 out
         self.plan_head_tip = nn.Sequential(
             nn.Flatten(),
-            # nn.BatchNorm1d(1024),
+            #nn.BatchNorm1d(1024),
             nn.ELU(),
             nn.Linear(1024, 4096),
-            # nn.BatchNorm1d(4096),
+            #nn.BatchNorm1d(4096),
             nn.ReLU(),
-            # nn.Dropout(0.3),
+            #nn.Dropout(0.3),
             nn.Linear(4096, M * (num_pts * 3 + 1))  # +1 for cls
         )
 
     def forward(self, x, hidden):
         features = self.backbone.extract_features(x)
-
 
         raw_preds = self.plan_head(features)
         raw_preds, hidden = self.gru(raw_preds[:, None, :], hidden)  # N, L, H_in for batch_first=True
